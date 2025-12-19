@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Vibe World</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&display=swap');
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #202028;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Fredoka', sans-serif;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            background: linear-gradient(to bottom, #87CEEB, #E0F7FA);
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 24px;
+            font-weight: 600;
+            text-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+            pointer-events: none;
+        }
+
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(5px);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 48px;
+            margin-bottom: 10px;
+            color: #fff;
+            text-shadow: 0 4px 0 rgba(0,0,0,0.2);
+        }
+
+        p {
+            font-size: 20px;
+            opacity: 0.9;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .btn {
+            margin-top: 20px;
+            padding: 12px 30px;
+            background: #ff4757;
+            border: none;
+            border-radius: 50px;
+            color: white;
+            font-size: 20px;
+            font-family: inherit;
+            cursor: pointer;
+            transition: transform 0.1s, background 0.2s;
+            box-shadow: 0 4px 0 #c0392b;
+        }
+
+        .btn:active {
+            transform: translateY(4px);
+            box-shadow: none;
+        }
+
+        .btn:hover {
+            background: #ff6b81;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="ui-layer">
+        <div>SCORE: <span id="score-display">0</span></div>
+    </div>
+    <div id="start-screen">
+        <h1>SUPER VIBE WORLD</h1>
+        <p>Arrow Keys to Move & Jump</p>
+        <button class="btn" id="start-btn">PLAY</button>
+    </div>
+    <div id="game-over-screen" class="hidden">
+        <h1>GAME OVER</h1>
+        <p>Score: <span id="final-score">0</span></p>
+        <button class="btn" id="restart-btn">TRY AGAIN</button>
+    </div>
+</div>
+
+<script>
+    // --- Configuration ---
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 600;
+    const GRAVITY = 0.6;
+    const FRICTION = 0.8;
+    const JUMP_FORCE = -14;
+    const SPEED = 5;
+    
+    // --- Assets & Utils ---
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreDisplay = document.getElementById('score-display');
+    const finalScoreDisplay = document.getElementById('final-score');
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const startBtn = document.getElementById('start-btn');
+    const restartBtn = document.getElementById('restart-btn');
+
+    let gameRunning = false;
+    let score = 0;
+    let frameId;
+
+    // Input State
+    const keys = {
+        ArrowRight: false,
+        ArrowLeft: false,
+        ArrowUp: false,
+        Space: false
+    };
+
+    window.addEventListener('keydown', (e) => {
+        if(e.code === 'Space') keys.Space = true;
+        if(keys.hasOwnProperty(e.key)) keys[e.key] = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if(e.code === 'Space') keys.Space = false;
+        if(keys.hasOwnProperty(e.key)) keys[e.key] = false;
+    });
+
+    // --- Classes ---
+
+    class Camera {
+        constructor() {
+            this.x = 0;
+            this.y = 0;
+        }
+        
+        follow(target) {
+            // Simple lerp for smooth camera
+            const targetX = target.x - CANVAS_WIDTH / 2 + target.width / 2;
+            // Keep camera within bounds (assuming level starts at 0 and goes right)
+            // For now, just follow x
+            this.x += (targetX - this.x) * 0.1;
+            
+            // Clamp camera to not show negative space
+            if (this.x < 0) this.x = 0;
+        }
+    }
+
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x;
+            this.y = y;
+            this.vx = (Math.random() - 0.5) * 6;
+            this.vy = (Math.random() - 0.5) * 6;
+            this.life = 1.0;
+            this.color = color;
+            this.size = Math.random() * 5 + 2;
+        }
+
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.life -= 0.02;
+            this.size *= 0.95;
+        }
+
+        draw(ctx, camX) {
+            ctx.globalAlpha = this.life;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x - camX, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+        }
+    }
+
+    class Entity {
+        constructor(x, y, width, height, color) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.color = color;
+            this.vx = 0;
+            this.vy = 0;
+            this.grounded = false;
+            this.markedForDeletion = false;
+        }
+
+        drawRect(ctx, camX, radius = 0) {
+            ctx.fillStyle = this.color;
+            // Round rect helper
+            const x = this.x - camX;
+            const y = this.y;
+            const w = this.width;
+            const h = this.height;
+            
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, radius);
+            ctx.fill();
+        }
+    }
+
+    class Player extends Entity {
+        constructor(x, y) {
+            super(x, y, 40, 40, '#ff4757'); // Reddish
+            this.facingRight = true;
+        }
+
+        update(platforms, enemies) {
+            // Input
+            if (keys.ArrowRight) {
+                this.vx += 1;
+                this.facingRight = true;
+            }
+            if (keys.ArrowLeft) {
+                this.vx -= 1;
+                this.facingRight = false;
+            }
+            
+            // Friction & Limits
+            this.vx *= FRICTION;
+            if (Math.abs(this.vx) < 0.1) this.vx = 0;
+            if (this.vx > SPEED) this.vx = SPEED;
+            if (this.vx < -SPEED) this.vx = -SPEED;
+
+            // Jump
+            if ((keys.ArrowUp || keys.Space) && this.grounded) {
+                this.vy = JUMP_FORCE;
+                this.grounded = false;
+                createParticles(this.x + this.width/2, this.y + this.height, '#fff', 5);
+            }
+
+            // Gravity
+            this.vy += GRAVITY;
+            
+            // Apply Velocity
+            this.x += this.vx;
+            this.checkHorizontalCollisions(platforms);
+            
+            this.y += this.vy;
+            this.grounded = false; // Assume falling until collision proves otherwise
+            this.checkVerticalCollisions(platforms);
+
+            // Bounds
+            if (this.y > CANVAS_HEIGHT + 100) {
+                gameOver();
+            }
+        }
+
+        checkHorizontalCollisions(platforms) {
+            for (let p of platforms) {
+                if (this.x < p.x + p.width &&
+                    this.x + this.width > p.x &&
+                    this.y < p.y + p.height &&
+                    this.y + this.height > p.y) {
+                    
+                    if (this.vx > 0) {
+                        this.x = p.x - this.width;
+                        this.vx = 0;
+                    } else if (this.vx < 0) {
+                        this.x = p.x + p.width;
+                        this.vx = 0;
+                    }
+                }
+            }
+        }
+
+        checkVerticalCollisions(platforms) {
+            for (let p of platforms) {
+                if (this.x < p.x + p.width &&
+                    this.x + this.width > p.x &&
+                    this.y < p.y + p.height &&
+                    this.y + this.height > p.y) {
+                    
+                    if (this.vy > 0) {
+                        this.y = p.y - this.height;
+                        this.vy = 0;
+                        this.grounded = true;
+                    } else if (this.vy < 0) {
+                        this.y = p.y + p.height;
+                        this.vy = 0;
+                    }
+                }
+            }
+        }
+
+        draw(ctx, camX) {
+            // Draw Body
+            ctx.shadowColor = 'rgba(0,0,0,0.2)';
+            ctx.shadowBlur = 10;
+            ctx.shadowOffsetY = 5;
+            
+            super.drawRect(ctx, camX, 8);
+            
+            ctx.shadowColor = 'transparent';
+
+            // Draw Eyes
+            ctx.fillStyle = 'white';
+            const eyeOffset = this.facingRight ? 6 : -6;
+            const eyeX = this.x - camX + this.width/2 + eyeOffset;
+            
+            ctx.beginPath();
+            ctx.arc(eyeX + 4, this.y + 12, 5, 0, Math.PI*2);
+            ctx.arc(eyeX - 4, this.y + 12, 5, 0, Math.PI*2);
+            ctx.fill();
+            
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(eyeX + 4 + (this.facingRight?1:-1), this.y + 12, 2, 0, Math.PI*2);
+            ctx.arc(eyeX - 4 + (this.facingRight?1:-1), this.y + 12, 2, 0, Math.PI*2);
+            ctx.fill();
+        }
+    }
+
+    class Platform extends Entity {
+        constructor(x, y, width, height) {
+            super(x, y, width, height, '#2ed573'); // Green
+        }
+
+        draw(ctx, camX) {
+            // Top grass layer
+            ctx.fillStyle = '#7bed9f';
+            ctx.beginPath();
+            ctx.roundRect(this.x - camX, this.y, this.width, this.height, 4);
+            ctx.fill();
+
+            // Dirt body
+            ctx.fillStyle = '#2ed573';
+            ctx.beginPath();
+            ctx.roundRect(this.x - camX, this.y + 10, this.width, this.height - 10, [0, 0, 4, 4]);
+            ctx.fill();
+            
+            // Decor
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.beginPath();
+            ctx.arc(this.x - camX + 10, this.y + 5, 3, 0, Math.PI*2);
+            ctx.arc(this.x - camX + 30, this.y + 8, 2, 0, Math.PI*2);
+            ctx.fill();
+        }
+    }
+
+    class Enemy extends Entity {
+        constructor(x, y) {
+            super(x, y, 35, 35, '#a55eea'); // Purple
+            this.vx = -2;
+            this.patrolStart = x - 100;
+            this.patrolEnd = x + 100;
+        }
+
+        update() {
+            this.x += this.vx;
+            
+            // Simple patrol
+            if (this.x < this.patrolStart) this.vx = 2;
+            if (this.x > this.patrolEnd) this.vx = -2;
+        }
+
+        draw(ctx, camX) {
+            // Squish animation if dead? (Handled in game loop)
+            
+            ctx.fillStyle = this.color;
+            const x = this.x - camX;
+            
+            // Body
+            ctx.beginPath();
+            ctx.moveTo(x, this.y + this.height);
+            ctx.lineTo(x + this.width, this.y + this.height);
+            ctx.quadraticCurveTo(x + this.width, this.y, x + this.width/2, this.y);
+            ctx.quadraticCurveTo(x, this.y, x, this.y + this.height);
+            ctx.fill();
+
+            // Eyes
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(x + 10, this.y + 15, 5, 0, Math.PI*2);
+            ctx.arc(x + 25, this.y + 15, 5, 0, Math.PI*2);
+            ctx.fill();
+            
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(x + 10, this.y + 15, 2, 0, Math.PI*2);
+            ctx.arc(x + 25, this.y + 15, 2, 0, Math.PI*2);
+            ctx.fill();
+            
+            // Feet
+            ctx.fillStyle = '#4b4b4b';
+            ctx.beginPath();
+            ctx.arc(x + 5, this.y + this.height, 5, 0, Math.PI, true);
+            ctx.arc(x + 30, this.y + this.height, 5, 0, Math.PI, true);
+            ctx.fill();
+        }
+    }
+
+    class Coin extends Entity {
+        constructor(x, y) {
+            super(x, y, 20, 20, '#f1c40f');
+            this.bobOffset = Math.random() * Math.PI * 2;
+        }
+
+        update() {
+            this.bobOffset += 0.1;
+        }
+
+        draw(ctx, camX) {
+            const y = this.y + Math.sin(this.bobOffset) * 5;
+            const x = this.x - camX;
+            
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(x + 10, y + 10, 10, 0, Math.PI*2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#f39c12';
+            ctx.beginPath();
+            ctx.arc(x + 10, y + 10, 7, 0, Math.PI*2);
+            ctx.fill();
+        }
+    }
+
+    // --- Game State ---
+    let player;
+    let platforms = [];
+    let enemies = [];
+    let coins = [];
+    let particles = [];
+    let camera = new Camera();
+
+    function initGame() {
+        score = 0;
+        scoreDisplay.textContent = score;
+        player = new Player(100, 300);
+        camera = new Camera();
+        
+        // Level Generation
+        platforms = [];
+        enemies = [];
+        coins = [];
+        
+        // Ground
+        for(let i=0; i<20; i++) {
+            platforms.push(new Platform(i * 200, 500, 200, 100));
+        }
+        
+        // Platforms & Hazards
+        platforms.push(new Platform(400, 350, 150, 30));
+        platforms.push(new Platform(700, 250, 150, 30));
+        platforms.push(new Platform(1000, 350, 150, 30));
+        platforms.push(new Platform(1300, 200, 150, 30));
+        
+        // Enemies
+        enemies.push(new Enemy(500, 465));
+        enemies.push(new Enemy(900, 465));
+        enemies.push(new Enemy(1400, 465));
+        
+        // Coins
+        coins.push(new Coin(450, 300));
+        coins.push(new Coin(750, 200));
+        coins.push(new Coin(1050, 300));
+        coins.push(new Coin(1350, 150));
+        
+        for(let i=0; i<10; i++) {
+             coins.push(new Coin(1600 + i * 50, 450));
+        }
+    }
+
+    function createParticles(x, y, color, count) {
+        for(let i=0; i<count; i++) {
+            particles.push(new Particle(x, y, color));
+        }
+    }
+
+    function update() {
+        if (!gameRunning) return;
+
+        player.update(platforms, enemies);
+        camera.follow(player);
+
+        // Enemies
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            let e = enemies[i];
+            e.update();
+            
+            // Collision with Player
+            if (player.x < e.x + e.width &&
+                player.x + player.width > e.x &&
+                player.y < e.y + e.height &&
+                player.y + player.height > e.y) {
+                
+                // Jump on top
+                if (player.vy > 0 && player.y + player.height - player.vy < e.y + e.height * 0.5) {
+                    enemies.splice(i, 1);
+                    player.vy = -8; // Bounce
+                    createParticles(e.x + e.width/2, e.y + e.height/2, e.color, 10);
+                    score += 100;
+                    scoreDisplay.textContent = score;
+                } else {
+                    gameOver();
+                }
+            }
+        }
+
+        // Coins
+        for (let i = coins.length - 1; i >= 0; i--) {
+            let c = coins[i];
+            c.update();
+            
+            if (player.x < c.x + c.width &&
+                player.x + player.width > c.x &&
+                player.y < c.y + c.height &&
+                player.y + player.height > c.y) {
+                
+                coins.splice(i, 1);
+                createParticles(c.x + 10, c.y + 10, '#f1c40f', 5);
+                score += 50;
+                scoreDisplay.textContent = score;
+            }
+        }
+
+        // Particles
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].update();
+            if (particles[i].life <= 0) particles.splice(i, 1);
+        }
+        
+        // Win condition (end of level)
+        if (player.x > 3800) {
+            // Loop level or win? Just loop for now
+            player.x = 100;
+            player.y = 300;
+        }
+    }
+
+    function draw() {
+        // Clear
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        // Background Parallax (Clouds)
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.beginPath();
+        ctx.arc(100 - camera.x * 0.2, 100, 40, 0, Math.PI*2);
+        ctx.arc(150 - camera.x * 0.2, 120, 50, 0, Math.PI*2);
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.arc(600 - camera.x * 0.2, 150, 60, 0, Math.PI*2);
+        ctx.arc(680 - camera.x * 0.2, 120, 40, 0, Math.PI*2);
+        ctx.fill();
+
+        // Draw Entities
+        for (let p of platforms) p.draw(ctx, camera.x);
+        for (let c of coins) c.draw(ctx, camera.x);
+        for (let e of enemies) e.draw(ctx, camera.x);
+        player.draw(ctx, camera.x);
+        for (let p of particles) p.draw(ctx, camera.x);
+    }
+
+    function loop() {
+        update();
+        draw();
+        frameId = requestAnimationFrame(loop);
+    }
+
+    function startGame() {
+        initGame();
+        gameRunning = true;
+        startScreen.classList.add('hidden');
+        gameOverScreen.classList.add('hidden');
+        loop();
+    }
+
+    function gameOver() {
+        gameRunning = false;
+        finalScoreDisplay.textContent = score;
+        gameOverScreen.classList.remove('hidden');
+        cancelAnimationFrame(frameId);
+    }
+
+    startBtn.addEventListener('click', startGame);
+    restartBtn.addEventListener('click', startGame);
+
+    // Initial Draw
+    ctx.fillStyle = '#87CEEB';
+    ctx.fillRect(0,0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+</script>
+</body>
+</html>
