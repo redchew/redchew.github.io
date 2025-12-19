@@ -1,7 +1,440 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Forge Land</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            border: 6px solid #333;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #5c94fc;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            text-shadow: 2px 2px 0px #000;
+            display: flex;
+            gap: 30px;
+        }
+        .stat {
+            font-size: 24px;
+            font-weight: bold;
+            color: #f1c40f;
+        }
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            display: none;
+            background: rgba(0,0,0,0.8);
+            padding: 40px;
+            border-radius: 20px;
+            border: 4px solid #fff;
+        }
+        h1 { font-size: 48px; margin: 0; color: #fff; }
+        p { font-size: 20px; color: #ccc; }
+        .controls-hint {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.6);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            color: #eee;
+            backdrop-filter: blur(4px);
+        }
+    </style>
+</head>
 <body>
-<h1>Hello World</h1>
-<p>I'm hosted with GitHub Pages.</p>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui">
+        <div class="stat">COINS: <span id="coin-count">0</span></div>
+        <div class="stat">LIVES: <span id="lives-count">3</span></div>
+    </div>
+    <div id="message">
+        <h1 id="msg-title">GAME OVER</h1>
+        <p>Press 'R' to Restart</p>
+    </div>
+    <div class="controls-hint">ARROWS / WASD to Move &amp; Jump | R to Reset</div>
+</div>
+
+<script>
+/**
+ * Super Forge Land
+ * A Mario-inspired platformer in a single file.
+ */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const coinDisplay = document.getElementById('coin-count');
+const livesDisplay = document.getElementById('lives-count');
+const messageBox = document.getElementById('message');
+const msgTitle = document.getElementById('msg-title');
+
+const GRAVITY = 0.6;
+const FRICTION = 0.85;
+const JUMP_FORCE = -14;
+const MOVE_SPEED = 5.5;
+const CANVAS_WIDTH = 800;
+const CANVAS_HEIGHT = 480;
+
+canvas.width = CANVAS_WIDTH;
+canvas.height = CANVAS_HEIGHT;
+
+let gameState = 'playing';
+let score = 0;
+let lives = 3;
+let cameraX = 0;
+const keys = {};
+
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (e.code === 'KeyR') resetGame();
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+class Player {
+    constructor() {
+        this.reset();
+    }
+
+    reset() {
+        this.x = 100;
+        this.y = 300;
+        this.width = 30;
+        this.height = 44;
+        this.velX = 0;
+        this.velY = 0;
+        this.grounded = false;
+        this.direction = 'right';
+        this.walkCycle = 0;
+    }
+
+    update() {
+        if (keys['ArrowRight'] || keys['KeyD']) {
+            if (this.velX < MOVE_SPEED) this.velX += 0.8;
+            this.direction = 'right';
+        } else if (keys['ArrowLeft'] || keys['KeyA']) {
+            if (this.velX > -MOVE_SPEED) this.velX -= 0.8;
+            this.direction = 'left';
+        } else {
+            this.velX *= FRICTION;
+        }
+
+        if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && this.grounded) {
+            this.velY = JUMP_FORCE;
+            this.grounded = false;
+        }
+
+        this.velY += GRAVITY;
+        this.x += this.velX;
+        this.y += this.velY;
+
+        if (this.x < 0) this.x = 0;
+        if (this.y > CANVAS_HEIGHT + 100) this.die();
+
+        if (Math.abs(this.velX) > 0.5 && this.grounded) {
+            this.walkCycle += 0.2;
+        } else {
+            this.walkCycle = 0;
+        }
+    }
+
+    die() {
+        lives--;
+        livesDisplay.innerText = lives;
+        if (lives <= 0) {
+            endGame(false);
+        } else {
+            this.reset();
+            cameraX = 0;
+        }
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        if (this.direction === 'left') {
+            ctx.scale(-1, 1);
+            ctx.translate(-this.width, 0);
+        }
+
+        const bounce = Math.sin(this.walkCycle) * 3;
+        
+        // Body (Red)
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(2, 12 + bounce, 26, 24);
+        
+        // Overalls (Blue)
+        ctx.fillStyle = '#2980b9';
+        ctx.fillRect(2, 28 + bounce, 26, 12);
+        ctx.fillRect(4, 40 + bounce, 8, 4); // Foot L
+        ctx.fillRect(18, 40 + bounce, 8, 4); // Foot R
+        
+        // Head
+        ctx.fillStyle = '#ffdbac';
+        ctx.fillRect(6, 0 + bounce, 18, 16);
+        
+        // Hat
+        ctx.fillStyle = '#c0392b';
+        ctx.fillRect(4, 0 + bounce, 22, 6);
+        
+        // Eyes
+        ctx.fillStyle = '#000';
+        ctx.fillRect(18, 5 + bounce, 3, 4);
+
+        ctx.restore();
+    }
+}
+
+class Enemy {
+    constructor(x, y, range) {
+        this.startX = x;
+        this.x = x;
+        this.y = y;
+        this.width = 34;
+        this.height = 34;
+        this.range = range;
+        this.velX = 1.8;
+        this.dead = false;
+    }
+
+    update() {
+        if (this.dead) return;
+        this.x += this.velX;
+        if (Math.abs(this.x - this.startX) > this.range) {
+            this.velX *= -1;
+        }
+    }
+
+    draw() {
+        if (this.dead) return;
+        ctx.fillStyle = '#8e44ad';
+        ctx.beginPath();
+        ctx.roundRect(this.x, this.y, this.width, this.height, 8);
+        ctx.fill();
+        ctx.fillStyle = 'white';
+        ctx.fillRect(this.x + 6, this.y + 8, 6, 6);
+        ctx.fillRect(this.x + 22, this.y + 8, 6, 6);
+    }
+}
+
+class Coin {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 20;
+        this.height = 20;
+        this.collected = false;
+    }
+
+    draw() {
+        if (this.collected) return;
+        const bob = Math.sin(Date.now() / 150) * 4;
+        ctx.fillStyle = '#f1c40f';
+        ctx.beginPath();
+        ctx.arc(this.x + 10, this.y + 10 + bob, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#d4ac0d';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+}
+
+let platforms = [];
+let coins = [];
+let enemies = [];
+const goal = { x: 3500, y: 40, width: 10, height: 400 };
+
+function initLevel() {
+    platforms = [
+        { x: 0, y: 440, w: 1000, h: 40 },
+        { x: 1150, y: 440, w: 900, h: 40 },
+        { x: 2200, y: 440, w: 1500, h: 40 },
+        
+        { x: 300, y: 320, w: 150, h: 25 },
+        { x: 550, y: 220, w: 150, h: 25 },
+        { x: 850, y: 320, w: 150, h: 25 },
+        
+        { x: 1300, y: 340, w: 200, h: 25 },
+        { x: 1600, y: 260, w: 200, h: 25 },
+        
+        { x: 2300, y: 340, w: 120, h: 25 },
+        { x: 2500, y: 240, w: 120, h: 25 },
+        { x: 2700, y: 140, w: 120, h: 25 },
+        { x: 3000, y: 300, w: 300, h: 25 }
+    ];
+
+    coins = [
+        new Coin(360, 270), new Coin(610, 170), new Coin(910, 270),
+        new Coin(1350, 290), new Coin(1450, 290),
+        new Coin(1650, 210), new Coin(1750, 210),
+        new Coin(2350, 290), new Coin(2550, 190), new Coin(2750, 90),
+        new Coin(3050, 250), new Coin(3150, 250), new Coin(3250, 250)
+    ];
+
+    enemies = [
+        new Enemy(450, 406, 120),
+        new Enemy(1400, 406, 180),
+        new Enemy(2400, 406, 250),
+        new Enemy(3100, 266, 80)
+    ];
+}
+
+const player = new Player();
+
+function checkCollisions() {
+    player.grounded = false;
+
+    platforms.forEach(p => {
+        if (player.x < p.x + p.w && player.x + player.width > p.x &&
+            player.y + player.height > p.y && player.y + player.height < p.y + p.h + player.velY) {
+            if (player.velY >= 0) {
+                player.grounded = true;
+                player.velY = 0;
+                player.y = p.y - player.height;
+            }
+        }
+    });
+
+    coins.forEach(c => {
+        if (!c.collected && 
+            player.x < c.x + 20 && player.x + player.width > c.x &&
+            player.y < c.y + 20 && player.y + player.height > c.y) {
+            c.collected = true;
+            score += 10;
+            coinDisplay.innerText = score;
+        }
+    });
+
+    enemies.forEach(e => {
+        if (e.dead) return;
+        if (player.x < e.x + e.width && player.x + player.width > e.x &&
+            player.y < e.y + e.height && player.y + player.height > e.y) {
+            if (player.velY > 0 && player.y + player.height < e.y + 20) {
+                e.dead = true;
+                player.velY = JUMP_FORCE / 1.5;
+                score += 50;
+                coinDisplay.innerText = score;
+            } else {
+                player.die();
+            }
+        }
+    });
+
+    if (player.x > goal.x) endGame(true);
+}
+
+function drawBackground() {
+    let grad = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+    grad.addColorStop(0, '#5c94fc');
+    grad.addColorStop(1, '#92a8d1');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    for (let i = 0; i < 15; i++) {
+        let cx = (i * 450 - cameraX * 0.3) % 5000;
+        if (cx < -200) cx += 5000;
+        drawCloud(cx, 60 + (i % 4) * 50);
+    }
+}
+
+function drawCloud(x, y) {
+    ctx.beginPath();
+    ctx.arc(x, y, 25, 0, Math.PI * 2);
+    ctx.arc(x + 30, y - 15, 30, 0, Math.PI * 2);
+    ctx.arc(x + 65, y, 25, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function endGame(win) {
+    gameState = win ? 'won' : 'lost';
+    messageBox.style.display = 'block';
+    msgTitle.innerText = win ? 'VICTORY!' : 'GAME OVER';
+    msgTitle.style.color = win ? '#f1c40f' : '#e74c3c';
+}
+
+function resetGame() {
+    score = 0;
+    lives = 3;
+    coinDisplay.innerText = '0';
+    livesDisplay.innerText = '3';
+    messageBox.style.display = 'none';
+    gameState = 'playing';
+    cameraX = 0;
+    player.reset();
+    initLevel();
+}
+
+function gameLoop() {
+    if (gameState === 'playing') {
+        player.update();
+        enemies.forEach(e => e.update());
+        checkCollisions();
+        if (player.x > CANVAS_WIDTH / 2) cameraX = player.x - CANVAS_WIDTH / 2;
+    }
+
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    drawBackground();
+
+    ctx.save();
+    ctx.translate(-cameraX, 0);
+
+    platforms.forEach(p => {
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+        ctx.fillStyle = '#2ecc71';
+        ctx.fillRect(p.x, p.y, p.w, 10);
+    });
+
+    ctx.fillStyle = '#f39c12';
+    ctx.fillRect(goal.x, goal.y, 10, goal.height);
+    ctx.fillStyle = '#c0392b';
+    ctx.beginPath();
+    ctx.moveTo(goal.x, goal.y);
+    ctx.lineTo(goal.x - 50, goal.y + 30);
+    ctx.lineTo(goal.x, goal.y + 60);
+    ctx.fill();
+
+    coins.forEach(c => c.draw());
+    enemies.forEach(e => e.draw());
+    player.draw();
+
+    ctx.restore();
+    requestAnimationFrame(gameLoop);
+}
+
+initLevel();
+gameLoop();
+
+</script>
 </body>
 </html>
